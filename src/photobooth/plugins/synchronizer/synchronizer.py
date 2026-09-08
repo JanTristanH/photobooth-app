@@ -11,6 +11,7 @@ from .. import hookimpl
 from ..base_plugin import BasePlugin
 from .config import RemoteConfig, SynchronizerConfig
 from .immediate_synchronizer import ThreadedImmediateSyncPipeline
+from .immich import ThreadedImmichUploader
 from .regular_synchronizer import ThreadedRegularSync
 from .shareondemand import ShareOnDemandService
 from .types import TaskCopy, TaskDelete
@@ -29,14 +30,22 @@ class Synchronizer(BasePlugin[SynchronizerConfig]):
         self._immediate_pipeline: ThreadedImmediateSyncPipeline | None = None
         self._regular_sync: ThreadedRegularSync | None = None
         self._shareondemand: ShareOnDemandService | None = None
+        self._immich_uploader: ThreadedImmichUploader | None = None
 
     def __str__(self):
         return "Sync and Share Online"
 
     @hookimpl
     def start(self):
-        if not self._config.common.enabled:
+        if not self._config.common.enabled and not self._config.immich.enabled:
             logger.info("Synchronizer Plugin is disabled")
+            return
+
+        if self._config.immich.enabled:
+            self._immich_uploader = ThreadedImmichUploader(self._config.immich)
+
+        if not self._config.common.enabled:
+            logger.info("Rclone synchronization is disabled; Immich synchronization is enabled")
             return
 
         # _bind_gui = "0.0.0.0:5573" if self._config.rclone_config.webui_allow_remote_access else "127.0.0.1:5573"
@@ -86,6 +95,10 @@ class Synchronizer(BasePlugin[SynchronizerConfig]):
 
     @hookimpl
     def stop(self):
+
+        if self._immich_uploader:
+            self._immich_uploader.stop()
+            self._immich_uploader = None
 
         if self._regular_sync:
             self._regular_sync.stop()
@@ -216,14 +229,19 @@ class Synchronizer(BasePlugin[SynchronizerConfig]):
 
     @hookimpl
     def get_share_links(self, filepath_local: Path, identifier: UUID) -> list[str]:
-        if not self._rclone_client:
-            return []
-
         share_links: list[str] = []
 
+        if self._immich_uploader:
+            immich_link = self._immich_uploader.get_processed_share_link(identifier, wait_timeout=15)
+            if immich_link:
+                share_links.append(immich_link)
+
+        if not self._rclone_client:
+            return share_links
+
         if not self._config.common.enabled_share_links:
-            logger.info("share link generation is disabled globally in synchronizer plugin")
-            return []
+            logger.info("Rclone share link generation is disabled in synchronizer plugin")
+            return share_links
 
         if self._config.common.enabled_custom_qr_url:
             formatted_custom_qr_url = self._config.common.custom_qr_url.format(
@@ -284,6 +302,10 @@ class Synchronizer(BasePlugin[SynchronizerConfig]):
 
     @hookimpl
     def collection_files_added(self, files: list[Path], priority_modifier: int):
+        if self._immich_uploader:
+            for file in files:
+                self._immich_uploader.submit(file)
+
         if not self._immediate_pipeline:
             return
 

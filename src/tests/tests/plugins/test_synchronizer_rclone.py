@@ -93,6 +93,18 @@ def test_get_share_links_public_failure(sync):
     assert out == ["http://test123"]
 
 
+def test_immich_share_link_is_independent_from_rclone_share_links():
+    sync = Synchronizer()
+    sync._rclone_client = MagicMock()
+    sync._immich_uploader = MagicMock()
+    sync._immich_uploader.get_processed_share_link.return_value = "https://immich.example.test/s/fotobox/photos/asset-id"
+    sync._config.common.enabled_share_links = False
+
+    out = sync.get_share_links(Path("media/file.jpg"), uuid4())
+
+    assert out == ["https://immich.example.test/s/fotobox/photos/asset-id"]
+
+
 # ---------------------------------------------------------------------------
 # get_stats()
 # ---------------------------------------------------------------------------

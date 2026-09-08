@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, get_args
 
-from sqlalchemy import UUID, Boolean, DateTime, Enum, ForeignKey, Integer, String, event
+from sqlalchemy import UUID, Boolean, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, event
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -53,6 +53,19 @@ class Mediaitem(Base):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}> ({self.processed.name})"
+
+
+class ImmichAsset(Base):
+    """Persistent mapping between a local media variant and its Immich asset."""
+
+    __tablename__ = "immich_assets"
+    __table_args__ = (UniqueConstraint("mediaitem_id", "variant"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), default=uuid.uuid4, primary_key=True)
+    mediaitem_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mediaitems.id"), index=True)
+    variant: Mapped[str] = mapped_column(String)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), default=None)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 @event.listens_for(Mediaitem, "before_update")

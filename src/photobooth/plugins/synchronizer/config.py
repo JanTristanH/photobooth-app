@@ -2,12 +2,14 @@ import secrets
 import sys
 from platform import node
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, SecretStr, SerializationInfo, field_serializer
 from pydantic_settings import SettingsConfigDict
 
 from ... import CONFIG_PATH
 from ...services.config.baseconfig import BaseConfig
+from ...services.config.serializer import contextual_serializer_password
 
 hostname = node() if node() != "" else "localhost"
 
@@ -30,7 +32,7 @@ class Common(BaseModel):
 
     enabled_share_links: bool = Field(
         default=True,
-        description="Global switch to enable the share link generation for QR codes in this plugin.",
+        description="Enable Rclone, custom URL, and on-demand share link generation for QR codes. Immich share links are configured separately.",
     )
 
     enabled_custom_qr_url: bool = Field(
@@ -129,6 +131,40 @@ class OndemandShareConfig(BaseModel):
     )
 
 
+class ImmichConfig(BaseModel):
+    enabled: bool = Field(
+        default=False,
+        description="Upload each new original and processed media file once to an Immich album.",
+    )
+    server_url: HttpUrl = Field(
+        default=HttpUrl("http://localhost:2283"),
+        description="Immich server URL without the /api suffix.",
+    )
+    api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Immich API key with asset.upload and albumAsset.create permissions.",
+    )
+    album_id: UUID | None = Field(
+        default=None,
+        description="Target Immich album ID.",
+    )
+    shared_album_slug: str = Field(
+        default="",
+        pattern=r"^[A-Za-z0-9_-]*$",
+        description="Slug of the public Immich shared link used for QR codes, for example fotobox.",
+    )
+    request_timeout: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=120.0,
+        description="Timeout for each Immich API request in seconds.",
+    )
+
+    @field_serializer("api_key")
+    def contextual_serializer(self, value, info: SerializationInfo):
+        return contextual_serializer_password(value, info)
+
+
 class RemoteConfig(BaseModel):
     enabled: bool = Field(
         default=False,
@@ -178,6 +214,8 @@ class SynchronizerConfig(BaseConfig):
     common: Common = Common()
 
     rclone_config: RcloneConfig = RcloneConfig()
+
+    immich: ImmichConfig = ImmichConfig()
 
     remotes: list[RemoteConfig] = [
         RemoteConfig(
