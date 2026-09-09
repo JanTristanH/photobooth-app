@@ -83,6 +83,7 @@ class Gphoto2Backend(AbstractBackend):
     def _handle_switchmode_init(self):
         logger.debug("configure camera during device init")
         self._handle_switchmode(self._config.parameterset_device_init)
+        self._initialize_zoom()
 
     def _handle_switchmode_video_mode(self):
         logger.debug("configure camera optimized for video")
@@ -138,6 +139,8 @@ class Gphoto2Backend(AbstractBackend):
             value_new_casted = str(value_new)
         elif config_type is GpWidgets.GP_WIDGET_TOGGLE:
             value_new_casted = 1 if str(value_new).lower() in ("true", "1") else 0
+        elif config_type is GpWidgets.GP_WIDGET_RANGE:
+            value_new_casted = float(value_new)
         else:
             raise RuntimeError(f"The app does not support the setting's type '{config_type}' for {child.get_name()}")
 
@@ -147,6 +150,40 @@ class Gphoto2Backend(AbstractBackend):
         except Exception as exc:
             logger.exception(exc)
             raise RuntimeError(f"Cannot set '{name}' to '{value_new}'! Command ignored. Error: {exc}") from exc
+
+    def _initialize_zoom(self) -> None:
+        if not self._config.initial_zoom_enabled:
+            return
+
+        target_mm = self._config.initial_zoom_target_mm
+        try:
+            camera_config = self._camera.get_config()
+            zoom_widget = camera_config.get_child_by_name("zoom")
+
+            if GpWidgets(zoom_widget.get_type()) is not GpWidgets.GP_WIDGET_RANGE:
+                raise RuntimeError("camera config 'zoom' is not a range")
+
+            wide_mm, maximum_mm, _ = zoom_widget.get_range()
+            if not wide_mm <= target_mm <= maximum_mm:
+                raise ValueError(f"target {target_mm:g} mm is outside the camera range {wide_mm:g}-{maximum_mm:g} mm")
+
+            logger.info(f"initial zoom: move lens to wide-angle limit {wide_mm:g} mm")
+            self._update_camera_config(camera_config, "zoom", wide_mm)
+            self._camera.set_config(camera_config)
+
+            if target_mm != wide_mm:
+                # Refresh the tree after the first physical movement. Sony's
+                # zoom widget is stateful and libgphoto2 uses its current value
+                # to determine the direction and number of internal steps.
+                camera_config = self._camera.get_config()
+                logger.info(f"initial zoom: move lens to target {target_mm:g} mm")
+                self._update_camera_config(camera_config, "zoom", target_mm)
+                self._camera.set_config(camera_config)
+
+            actual_mm = self._camera.get_config().get_child_by_name("zoom").get_value()
+            logger.info(f"initial zoom completed at camera-reported {actual_mm:g} mm")
+        except Exception as exc:
+            logger.warning(f"initial zoom failed and will be ignored: {exc}")
 
     def setup_resource(self):
         assert gp
@@ -160,6 +197,11 @@ class Gphoto2Backend(AbstractBackend):
             # logger.error(f"could not get camera information, error {exc}")
             logger.debug("error occured, please check https://photobooth-app.org/help/faq/#gphoto2-camera-found-but-no-access for troubleshooting.")
             raise ConnectionError(f"Could not connect to camera, error: {exc}") from exc
+
+        # A resilient-service retry creates a new camera connection without
+        # recreating this backend. Resetting the active mode makes the device
+        # init settings (including initial zoom) run once for every connection.
+        self._mode_machine.active_mode = None
 
         # info output
         # camera_config = self._camera.get_config()

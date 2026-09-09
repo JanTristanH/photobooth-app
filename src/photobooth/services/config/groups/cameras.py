@@ -160,6 +160,17 @@ class GroupCameraGphoto2(BaseModelCamera):
     model_config = ConfigDict(title="Gphoto2")
     backend_type: Literal["Gphoto2"] = "Gphoto2"
 
+    initial_zoom_enabled: bool = Field(
+        default=False,
+        description="Move a supported power-zoom lens to the configured focal length once after each camera connection, before liveview starts.",
+    )
+    initial_zoom_target_mm: float = Field(
+        default=23.0,
+        gt=0,
+        le=1000,
+        description="Initial focal length in millimetres. The lens is moved to its wide-angle limit first so the result is reproducible.",
+    )
+
     parameterset_device_init: list[Gphoto2Parameters] = Field(
         default=[
             Gphoto2Parameters(name="capturetarget", value="", enabled=False),
